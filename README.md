@@ -46,6 +46,106 @@ uv pip install -e .
 uv pip install -e third_party/DynamixelSDK/python
 ```
 
+### Windows 11 (Native) Support
+
+Windows 11 can run a useful subset of GELLO natively, including MuJoCo simulation,
+ZMQ communication, data collection, RealSense, and single SpaceMouse control.
+Dynamixel/U2D2 can also be used through a Windows COM port after adding the
+appropriate calibrated entry to `PORT_CONFIG_MAP`.
+
+#### Windows installation
+
+From PowerShell:
+
+```powershell
+git clone --recursive https://github.com/jooyongsim/gello_software.git
+cd gello_software
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
+pip install -e .\third_party\DynamixelSDK\python
+```
+
+If PowerShell blocks virtual-environment activation, the following changes the
+execution policy only for the current shell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+#### U2D2 / Dynamixel on Windows
+
+Windows exposes U2D2 as a COM port such as `COM5`. Check the assigned port in
+Device Manager and verify the motor IDs and baud rate with Dynamixel Wizard
+before running GELLO.
+
+The driver now skips Linux-only `lsof`, `fuser`, and `chmod` handling on
+Windows and lets the Dynamixel SDK validate the COM port directly. Real GELLO
+hardware and calibration also disable the fake-driver fallback so connection
+errors are visible instead of silently returning fake joint values.
+
+For offset calibration, pass the COM port directly:
+
+```powershell
+python scripts\gello_get_offset.py --start-joints 0 -1.57 1.57 -1.57 -1.57 0 --joint-signs 1 1 -1 1 1 1 --port COM5
+```
+
+For `GelloAgent`, add a calibrated Windows entry to
+`gello/agents/gello_agent.py` using your actual COM port. For example:
+
+```python
+"COM5": DynamixelRobotConfig(
+    joint_ids=(1, 2, 3, 4, 5, 6),
+    joint_offsets=(
+        # Replace these values with the output from gello_get_offset.py.
+        0, 0, 0, 0, 0, 0,
+    ),
+    joint_signs=(1, 1, -1, 1, 1, 1),
+    gripper_config=(7, 20, -22),
+),
+```
+
+The offset and gripper values above are examples only; they depend on the
+physical GELLO assembly.
+
+You can then explicitly select the port:
+
+```powershell
+python experiments\run_env.py --agent gello --gello-port COM5
+```
+
+When `--gello-port` is omitted, `run_env.py` and `quick_run.py` now enumerate
+Windows serial ports using `pyserial`. Explicitly specifying the COM port is
+recommended when multiple serial devices are attached.
+
+#### Windows feature compatibility
+
+| Feature | Windows 11 native | Notes |
+| --- | --- | --- |
+| MuJoCo simulation | Supported | UR/Panda/xArm/YAM simulation paths are Python/MuJoCo based. |
+| Dummy/custom agents | Supported | No Linux device dependency in the agent abstraction. |
+| ZMQ robot/camera communication | Supported | Uses pyzmq/TCP. |
+| Data collection/post-processing | Supported | Normal Python filesystem usage; verify output paths for your setup. |
+| RealSense RGB/depth | Supported | Uses `pyrealsense2`; install a compatible Windows RealSense runtime/wheel. |
+| Single SpaceMouse | Supported with device/driver setup | `pyspacemouse.open()` can be used without a Linux `/dev/hidraw*` path. |
+| Dual SpaceMouse | Needs code/config changes | Current bimanual launcher contains Linux `/dev/hidraw0` and `/dev/hidraw1` paths. |
+| Quest/VR agent | Experimental on Windows | Depends on Oculus reader/ADB setup and is not documented as a primary Windows path. |
+| U2D2 / Dynamixel GELLO | Supported with Windows configuration | Use a COM port and add a calibrated COM entry to `PORT_CONFIG_MAP`. |
+| UR/xArm real robot | Potentially supported | Depends on the vendor SDK and network setup on Windows. |
+| YAM real robot | Not supported natively by this repository | Hardware path depends on Linux CAN/udev/SocketCAN-style setup. |
+| Franka FR3 ROS 2 stack | Linux recommended | Repository ROS 2 setup assumes Humble, libfranka/franka_ros2, bash and Linux device paths. |
+| Panda via Polymetis | Linux recommended | Polymetis-based hardware path is Linux-oriented. |
+| FACTR hardware gravity compensation | Linux recommended | Current hardware integration is tied closely to the YAM/Linux stack. |
+
+For Windows-first development, a practical progression is:
+`MuJoCo + DummyAgent` -> `MuJoCo + SpaceMouse` -> RealSense/data collection ->
+U2D2/GELLO -> real follower robot.
+
 ### Option 2: Docker
 
 Install [Docker](https://docs.docker.com/engine/install/ubuntu/), then:
