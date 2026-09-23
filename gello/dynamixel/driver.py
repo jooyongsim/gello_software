@@ -516,10 +516,27 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
     def _check_port_availability(self) -> bool:
         """Check if the port is available and not being used by other processes."""
-        # Windows COM ports (for example, COM5) are not filesystem paths.
-        # Let the Dynamixel SDK validate/open the port in _initialize_hardware().
+        # Windows COM ports (for example, COM5) are not filesystem paths, and
+        # lsof does not exist. Probe the port with pyserial instead so that
+        # "busy" and "missing" stay distinguishable before the SDK opens it.
         if os.name == "nt":
-            return True
+            if self._port.startswith("/dev/"):
+                print(
+                    f"Port {self._port} is a Linux device path and cannot be opened "
+                    "on Windows. Use the COM port from Device Manager (e.g. COM5) "
+                    "in your config."
+                )
+                return False
+            try:
+                import serial
+            except ImportError:
+                return True
+            try:
+                serial.Serial(self._port).close()
+                return True
+            except serial.SerialException as e:
+                print(f"Port {self._port} is not available: {e}")
+                return False
 
         try:
             # Check if port exists
