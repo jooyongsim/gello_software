@@ -12,9 +12,11 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+from importlib import import_module
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -22,10 +24,6 @@ import pinocchio as pin
 import yaml
 
 from gello.dynamixel.driver import DynamixelDriver
-
-import threading
-from importlib import import_module
-from typing import Any, Dict, cast
 
 
 def find_ttyusb(port_name: str) -> str:
@@ -201,32 +199,41 @@ class FACTRGravityCompensation:
         self.joint_signs = np.array(
             self.config["dynamixel"]["joint_signs"], dtype=float
         )
-        self.dynamixel_port = (
-            "/dev/serial/by-id/" + self.config["dynamixel"]["dynamixel_port"]
-        )
+        configured_port = self.config["dynamixel"]["dynamixel_port"]
+        if os.name == "nt":
+            # Windows exposes the U2D2 as a COM port; there is no by-id
+            # namespace to prefix and no ttyUSB latency timer to tune.
+            self.dynamixel_port = configured_port
+        else:
+            self.dynamixel_port = "/dev/serial/by-id/" + configured_port
 
-        # Check latency timer
-        try:
-            port_name = os.path.basename(self.dynamixel_port)
-            ttyUSBx = find_ttyusb(port_name)
-            latency_path = f"/sys/bus/usb-serial/devices/{ttyUSBx}/latency_timer"
-            result = subprocess.run(
-                ["cat", latency_path], capture_output=True, text=True, check=True
-            )
-            ttyUSB_latency_timer = int(result.stdout)
-            if ttyUSB_latency_timer != 1:
-                print(
-                    f"Warning: Latency timer of {ttyUSBx} is {ttyUSB_latency_timer}, should be 1 for optimal performance."
+        # Check latency timer (Linux only: the file lives under /sys)
+        if os.name != "nt":
+            try:
+                port_name = os.path.basename(self.dynamixel_port)
+                ttyUSBx = find_ttyusb(port_name)
+                latency_path = f"/sys/bus/usb-serial/devices/{ttyUSBx}/latency_timer"
+                result = subprocess.run(
+                    ["cat", latency_path], capture_output=True, text=True, check=True
                 )
-                print(
-                    f"Run: echo 1 | sudo tee /sys/bus/usb-serial/devices/{ttyUSBx}/latency_timer"
-                )
-        except (subprocess.CalledProcessError, FileNotFoundError, PermissionError) as e:
-            print(f"Could not check latency timer (file access issue): {e}")
-        except (ValueError, IndexError) as e:
-            print(f"Could not parse latency timer value: {e}")
-        except Exception as e:
-            print(f"Unexpected error checking latency timer: {e}")
+                ttyUSB_latency_timer = int(result.stdout)
+                if ttyUSB_latency_timer != 1:
+                    print(
+                        f"Warning: Latency timer of {ttyUSBx} is {ttyUSB_latency_timer}, should be 1 for optimal performance."
+                    )
+                    print(
+                        f"Run: echo 1 | sudo tee /sys/bus/usb-serial/devices/{ttyUSBx}/latency_timer"
+                    )
+            except (
+                subprocess.CalledProcessError,
+                FileNotFoundError,
+                PermissionError,
+            ) as e:
+                print(f"Could not check latency timer (file access issue): {e}")
+            except (ValueError, IndexError) as e:
+                print(f"Could not parse latency timer value: {e}")
+            except Exception as e:
+                print(f"Unexpected error checking latency timer: {e}")
 
         # Initialize driver
         joint_ids = (np.arange(self.num_motors) + 1).tolist()
@@ -303,8 +310,8 @@ class FACTRGravityCompensation:
             return
 
         # Lazily import here to avoid adding dependencies when teleop is disabled
-        from gello.zmq_core.robot_node import ZMQClientRobot, ZMQServerRobot
         from gello.env import RobotEnv
+        from gello.zmq_core.robot_node import ZMQClientRobot, ZMQServerRobot
 
         self.teleop_enabled = True
         self.teleop_rate_hz = float(teleop_cfg.get("hz", 30))
