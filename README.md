@@ -106,8 +106,11 @@ For offset calibration, pass the COM port directly:
 python scripts\gello_get_offset.py --start-joints 0 -1.57 1.57 -1.57 -1.57 0 --joint-signs 1 1 -1 1 1 1 --port COM5
 ```
 
-For `GelloAgent`, add a calibrated Windows entry to
-`gello/agents/gello_agent.py` using your actual COM port. For example:
+For `GelloAgent`, add a calibrated Windows entry to the `PORT_CONFIG_MAP`
+dictionary in `gello/agents/gello_agent.py`. The dictionary starts with
+`PORT_CONFIG_MAP: Dict[str, DynamixelRobotConfig] = {` and already contains four
+entries keyed by Linux `/dev/serial/by-id/...` paths. Add your COM port as one
+more key inside those braces, using your actual COM port. For example:
 
 ```python
 "COM5": DynamixelRobotConfig(
@@ -130,9 +133,32 @@ You can then explicitly select the port:
 python experiments\run_env.py --agent gello --gello-port COM5
 ```
 
-When `--gello-port` is omitted, `run_env.py` and `quick_run.py` now enumerate
-Windows serial ports using `pyserial`. Explicitly specifying the COM port is
-recommended when multiple serial devices are attached.
+When `--gello-port` is omitted, `run_env.py` and `quick_run.py` fall back to
+`gello/utils/serial_ports.py`, which enumerates Windows serial ports with
+`pyserial`, drops ports that report no USB vendor id (Bluetooth links and
+virtual COM ports), and lists FTDI devices first. A single match is used
+automatically; several matches are printed and you are asked to choose, because
+picking the first COM port silently is easy to get wrong on Windows. Passing
+`--gello-port` explicitly is still the most reliable option.
+
+#### YAML configs on Windows
+
+Every file under `configs/` ships with a Linux `port:` value such as
+`/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_...`. Before using
+`launch_yaml.py` on Windows, change that field to your COM port:
+
+```yaml
+agent:
+  port: "COM5"
+```
+
+If a Linux device path is left in place, the driver now reports it directly
+instead of failing inside the Dynamixel SDK:
+
+```
+Port /dev/serial/by-id/... is a Linux device path and cannot be opened on
+Windows. Use the COM port from Device Manager (e.g. COM5) in your config.
+```
 
 #### Windows feature compatibility
 
