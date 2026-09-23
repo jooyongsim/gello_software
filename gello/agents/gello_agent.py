@@ -123,7 +123,10 @@ class GelloAgent(Agent):
                 port=port, start_joints=start_joints
             )
         else:
-            assert os.path.exists(port), port
+            # Linux/macOS serial devices are filesystem paths, but Windows
+            # COM ports (for example, COM5) are not.
+            if os.name != "nt":
+                assert os.path.exists(port), port
             assert port in PORT_CONFIG_MAP, f"Port {port} not in config map"
 
             config = PORT_CONFIG_MAP[port]
