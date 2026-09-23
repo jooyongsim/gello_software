@@ -1,6 +1,6 @@
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 import numpy as np
@@ -39,7 +39,7 @@ class SpacemouseConfig:
     angle_scale: float = 0.24
     translation_scale: float = 0.06
     # only control the xyz, rotation direction, not the gripper
-    invert_control: np.ndarray = np.ones(6)
+    invert_control: np.ndarray = field(default_factory=lambda: np.ones(6))
     rotation_mode: str = "euler"
 
 
