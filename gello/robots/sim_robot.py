@@ -71,7 +71,7 @@ def build_scene(robot_xml_path: str, gripper_xml_path: Optional[str] = None):
 
 class ZMQServerThread(threading.Thread):
     def __init__(self, server):
-        super().__init__()
+        super().__init__(daemon=True)
         self._server = server
 
     def run(self):
@@ -123,6 +123,9 @@ class ZMQRobotServer:
             except zmq.error.Again:
                 print("Timeout in ZMQLeaderServer serve")
                 # Timeout occurred, check if the stop event is set
+            except zmq.error.ContextTerminated:
+                # stop() closed the socket and terminated the context.
+                break
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -218,6 +221,14 @@ class MujocoRobotServer:
     def serve(self) -> None:
         # start the zmq server
         self._zmq_server_thread.start()
+        try:
+            self._serve_viewer()
+        except KeyboardInterrupt:
+            print("Interrupted, shutting down.")
+        finally:
+            self.stop()
+
+    def _serve_viewer(self) -> None:
         with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
             while viewer.is_running():
                 step_start = time.time()
@@ -250,7 +261,8 @@ class MujocoRobotServer:
                     time.sleep(time_until_next_step)
 
     def stop(self) -> None:
-        self._zmq_server_thread.join()
+        self._zmq_server_thread.terminate()
+        self._zmq_server_thread.join(timeout=2)
 
     def __del__(self) -> None:
         self.stop()

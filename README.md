@@ -1,15 +1,344 @@
-# GELLO: General, Low-Cost, and Intuitive Teleoperation Framework
+# GELLO on Windows 11
+
+> ### ⚠️ This is a **Windows 11** fork of [wuphilipp/gello_software](https://github.com/wuphilipp/gello_software).
+>
+> Upstream GELLO targets Linux: it assumes `/dev/serial/by-id` device paths, `udev`
+> rules, SocketCAN, and Unix tools such as `lsof`, `fuser`, and `chmod`. This fork
+> adds native Windows 11 support on top of that:
+>
+> - COM-port serial discovery via `pyserial` ([`gello/utils/serial_ports.py`](gello/utils/serial_ports.py))
+> - Windows-safe paths in the Dynamixel driver — no `lsof` / `fuser` / `sudo chmod`
+> - COM ports accepted wherever a Linux device path was previously required
+> - UTF-8 README handling, so `pip install -e .` works on non-English Windows locales (cp949 and similar)
+> - Real connection errors instead of a silent fake-driver fallback during calibration
+>
+> **Linux and macOS users should use the upstream repository instead.**
+> Verified on Windows 11 with Python 3.11.
 
 <p align="center">
   <img src="imgs/title.png" />
 </p>
 
-GELLO is a general, low-cost, and intuitive teleoperation framework for robot manipulators. This repository contains all the software components for GELLO. 
+GELLO is a general, low-cost, and intuitive teleoperation framework for robot manipulators. This repository contains all the software components for GELLO.
+
+### Windows users start here
+
+| Step | Section | Hardware needed |
+| --- | --- | --- |
+| 1 | [Windows Quick Start 1: MuJoCo Simulation](#windows-quick-start-1-mujoco-simulation) | None |
+| 2 | [Windows Quick Start 2: U2D2 GELLO Calibration](#windows-quick-start-2-u2d2-gello-calibration) | U2D2 + GELLO |
+| — | [Full Windows 11 support notes](#windows-11-native-support) | — |
 
 For additional resources:
 - [Project Website](https://wuphilipp.github.io/gello_site/)
 - [Hardware Repository](https://github.com/wuphilipp/gello_mechanical) - STL files and build instructions
 - [ROS 2 Support](ros2/README.md)
+
+---
+
+## Windows Quick Start 1: MuJoCo Simulation
+
+Run this first. It requires **no hardware** and confirms that the virtual
+environment, the `mujoco_menagerie` submodule, and the ZMQ transport all work
+before you connect a U2D2.
+
+### Setup
+
+```powershell
+git clone --recursive https://github.com/jooyongsim/gello_software.git
+cd gello_software
+
+py -3.11 -m venv .venv
+
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e .\third_party\DynamixelSDK\python
+```
+
+`--recursive` matters: without the `mujoco_menagerie` submodule there are no robot
+XML files and the simulation has nothing to load. If you already cloned without it,
+run `git submodule update --init --recursive`.
+
+If `requirements.txt` fails on `pin`, `ur-rtde`, or `pyrealsense2`, none of those
+are needed for the simulation or the Dynamixel path. Install the working subset
+instead and skip the rest:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install mujoco dm_control tyro omegaconf==2.3.0 pyzmq numpy-quaternion pyquaternion pygame termcolor Pillow setuptools pyserial
+```
+
+Verify the interpreter before continuing:
+
+```powershell
+.\.venv\Scripts\python.exe --version
+```
+
+The expected result is Python 3.11.x.
+
+### Launch
+
+The simulation is two processes talking over ZMQ: a **robot node** (MuJoCo,
+default port 6001) and an **agent** that sends target joint angles. Open two
+terminals, both in the repository root.
+
+Terminal A — simulated robot node:
+
+```powershell
+.\.venv\Scripts\python.exe experiments\launch_nodes.py --robot sim_ur
+```
+
+A MuJoCo viewer window opens showing a UR5e. `--robot` accepts `sim_ur`,
+`sim_panda`, `sim_xarm`, and `sim_yam`.
+
+Terminal B — agent:
+
+```powershell
+.\.venv\Scripts\python.exe experiments\run_env.py --agent=none
+```
+
+Use `--agent=none` (or `dummy`) while no GELLO is connected. `--agent=gello`
+requires real Dynamixel hardware and is covered in
+[Quick Start 2](#windows-quick-start-2-u2d2-gello-calibration).
+
+### Verifying the loop without an agent
+
+To confirm the node is serving and the physics is stepping, connect a client
+directly from a third terminal:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from gello.zmq_core.robot_node import ZMQClientRobot; c = ZMQClientRobot(port=6001, host='127.0.0.1'); print('num_dofs =', c.num_dofs()); print('joint_state =', c.get_joint_state())"
+```
+
+Expected output for `sim_ur` — 6 arm joints plus 1 gripper:
+
+```
+num_dofs = 7
+joint_state = [2.3e-12  0.030  0.009 -1.9e-04  1.3e-04  1.5e-06  2.6e-03]
+```
+
+The small non-zero values are the arm settling under gravity, which confirms that
+`mj_step` is running rather than the model sitting frozen.
+
+### Known behavior on Windows
+
+- **Commanded poses do not land exactly on target.** The UR5e MJCF uses position
+  actuators under gravity, so a commanded `-1.57` settles near `-1.26`. This
+  steady-state droop is expected, not a configuration error.
+- **`arena.xml` appears in the repository root.** [`gello/robots/sim_robot.py`](gello/robots/sim_robot.py)
+  writes a debug MJCF dump into the working directory on every simulation launch.
+  It is upstream behavior and safe to delete.
+- **Run the node in a normal terminal, not a detached or background shell.**
+  Tearing down the MuJoCo viewer from a detached process exits with a
+  segmentation fault (exit code 139). The simulation itself is unaffected.
+- **Repeated `Timeout in ZMQLeaderServer serve` lines are normal.** They are idle
+  receive timeouts printed while no agent is connected.
+
+---
+
+## Windows Quick Start 2: U2D2 GELLO Calibration
+
+Do this only after [Quick Start 1](#windows-quick-start-1-mujoco-simulation)
+works. Calibration reads joint positions from real servos; it does not command
+motion.
+
+### Step 1 — Find the COM port
+
+Plug in the U2D2 and enumerate serial ports:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from serial.tools import list_ports; [print(p.device,'|',p.description,'|',p.hwid) for p in list_ports.comports()]"
+```
+
+The U2D2 is an FTDI device, so look for `VID:PID=0403:6014`:
+
+```
+COM4 | USB Serial Port(COM4) | USB VID:PID=0403:6014 SER=FTA7NLMOA
+```
+
+Device Manager shows the same assignment under Ports (COM & LPT). Note the number
+and pass it explicitly with `--port` / `--gello-port`. Automatic selection can
+pick a Bluetooth link or a virtual COM port instead.
+
+### Step 2 — Confirm the servos respond
+
+Ping each Dynamixel ID before calibrating. This is read-only: it changes no motor
+settings and does not enable torque.
+
+```powershell
+.\.venv\Scripts\python.exe -c "from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS; ph = PortHandler('COM4'); ph.openPort(); ph.setBaudRate(57600); pk = PacketHandler(2.0); print([(i, pk.ping(ph, i)[0]) for i in range(1, 11) if pk.ping(ph, i)[1] == COMM_SUCCESS]); ph.closePort()"
+```
+
+A healthy 6-DOF GELLO with a gripper reports seven servos:
+
+```
+[(1, 1200), (2, 1200), (3, 1200), (4, 1200), (5, 1200), (6, 1200), (7, 1190)]
+```
+
+IDs 1-6 are the arm joints (model 1200 = XL330-M288-T) and ID 7 is the gripper
+(model 1190 = XL330-M077-T).
+
+What to check if this returns nothing:
+
+- **Empty list at 57600** — the servos are on a different baud rate.
+  [`scripts/gello_get_offset.py`](scripts/gello_get_offset.py) hardcodes 57600, so
+  set the motors to 57600 in Dynamixel Wizard rather than editing the script.
+- **Duplicate or out-of-order IDs** — connect one motor at a time in Dynamixel
+  Wizard and assign IDs 1 through 7 in order from base to gripper.
+- **`openPort` fails** — another process already holds the port. On Windows the
+  driver cannot report which one, so close any other GELLO process or Dynamixel
+  Wizard session and retry.
+
+### Step 3 — Pose GELLO and measure the offsets
+
+1. Move GELLO into the reference pose for your follower robot
+   (see `imgs/gello_matching_joints.jpg`).
+2. Open the gripper fully — the script derives the open angle from the current
+   gripper position.
+3. Hold the pose and run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\gello_get_offset.py --start-joints 0 -1.57 1.57 -1.57 -1.57 0 --joint-signs 1 1 -1 1 1 1 --port COM4
+```
+
+`--start-joints` and `--joint-signs` depend on the follower robot:
+
+| Robot | `--joint-signs` | `--start-joints` |
+| --- | --- | --- |
+| UR | `1 1 -1 1 1 1` | `0 -1.57 1.57 -1.57 -1.57 0` |
+| Franka FER (Panda) | `1 -1 1 1 1 -1 1` | `0 0 0 -1.57 0 1.57 0` |
+| xArm | `1 1 1 1 1 1 1` | depends on build |
+| I2RT YAM | `1 -1 -1 -1 1 1` | `0 0 0 0 0 0` |
+
+The script prints four lines. Keep all four — Step 4 needs them:
+
+```
+best offsets               :  ['3.142', '4.712', ...]
+best offsets function of pi: [ 2*np.pi/2, 3*np.pi/2, ... ]
+gripper open (degrees)        <number>
+gripper close (degrees)       <number>
+```
+
+Because this fork passes `use_fake_fallback=False` during calibration, a failed
+connection raises instead of returning fabricated joint values. If numbers are
+printed, they are genuine readings.
+
+#### Run it twice, and check the margins
+
+`gello_get_offset.py` picks the nearest multiple of pi/2 for each joint. If a
+joint sits near the midpoint between two candidates, the choice flips between
+runs — the output looks perfectly normal, but a rerun silently gives a different
+90° answer for that joint. **Always run the calibration twice and confirm both
+runs match** before writing the values into a config.
+
+To see *why* a joint is flipping rather than inferring it from repeated runs,
+use the companion script:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_offset_margin.py --port COM4
+```
+
+It prints the same offsets plus two diagnostic columns:
+
+```
+joint  raw(rad)      best    resid       2nd  margin  verdict
+    1     6.386       4*pi/2     5.9d       5*pi/2   1.365  OK
+    2     0.647       1*pi/2    37.0d       2*pi/2   0.278  AMBIGUOUS -- repose this joint
+    3     1.528       2*pi/2     2.5d       1*pi/2   1.483  OK
+    4    -0.943       0*pi/2    35.9d       1*pi/2   0.318  AMBIGUOUS -- repose this joint
+    5     4.717       4*pi/2     0.2d       5*pi/2   1.563  OK
+    6     6.222       4*pi/2     3.5d       3*pi/2   1.448  OK
+```
+
+- `resid` — how far the joint is from the reference pose after applying the
+  chosen offset. A large value means GELLO is not actually in the reference pose
+  for that joint.
+- `margin` — the error gap to the runner-up candidate. Below roughly `0.8`, the
+  choice is one small nudge away from flipping.
+
+A joint is trustworthy when `resid` is under 15° and `margin` is over 0.8. In
+the example above, joints 2 and 4 sit about 36° from any pi/2 multiple, which is
+close to the 45° flip boundary — those two need to be physically re-posed, not
+re-measured.
+
+Add `--watch` to refresh live while posing GELLO by hand, which is far easier
+than rerunning the calibration and comparing by eye:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_offset_margin.py --port COM4 --watch
+```
+
+Press Ctrl+C once every joint reads `OK`; the final offsets are printed in the
+same format `gello_get_offset.py` uses.
+
+If a joint's `resid` refuses to drop no matter how carefully it is posed, that
+servo horn was mounted at a non-pi/2 angle during assembly. Remount it, or write
+the exact measured float into `joint_offsets` — the field accepts any float and
+the pi/2 rule is only a convention.
+
+
+### Step 4 — Add your COM port to `PORT_CONFIG_MAP`
+
+Open [`gello/agents/gello_agent.py`](gello/agents/gello_agent.py) and find:
+
+```python
+PORT_CONFIG_MAP: Dict[str, DynamixelRobotConfig] = {
+```
+
+It already contains four entries keyed by Linux `/dev/serial/by-id/...` paths.
+Add your COM port as one more key inside the same braces:
+
+```python
+"COM4": DynamixelRobotConfig(
+    joint_ids=(1, 2, 3, 4, 5, 6),
+    joint_offsets=(
+        2 * np.pi / 2,
+        3 * np.pi / 2,
+        2 * np.pi / 2,
+        2 * np.pi / 2,
+        2 * np.pi / 2,
+        2 * np.pi / 2,
+    ),
+    joint_signs=(1, 1, -1, 1, 1, 1),
+    gripper_config=(7, 20, -22),
+),
+```
+
+> **Every number above is a placeholder.** Substitute:
+>
+> - `joint_offsets` — the `best offsets function of pi` line from Step 3, one entry per joint
+> - `joint_signs` — the same `--joint-signs` values passed in Step 3
+> - `gripper_config` — `(gripper_joint_id, open_degrees, close_degrees)`, using the
+>   gripper ID from Step 2 and the two gripper lines from Step 3
+>
+> Do not paste placeholder text such as `<open angle>` into the file. Python fails
+> with `SyntaxError: invalid syntax` at that line, and because `gello_agent.py` is
+> imported at startup, every entry point stops working until it is corrected.
+
+### Step 5 — Teleoperate
+
+Test against the simulator before touching a real follower arm:
+
+```powershell
+# Terminal A
+.\.venv\Scripts\python.exe experiments\launch_nodes.py --robot sim_ur
+
+# Terminal B
+.\.venv\Scripts\python.exe experiments\run_env.py --agent=gello --gello-port COM4
+```
+
+Moving GELLO should move the simulated arm. If a joint moves in the wrong
+direction, invert that joint's sign in `joint_signs` rather than re-running
+calibration.
+
+To record demonstrations, add `--use-save-interface`: press `s` to start and `q`
+to stop. Episodes are written to `data/` in the repository root.
+
+```powershell
+.\.venv\Scripts\python.exe experiments\run_env.py --agent=gello --gello-port COM4 --use-save-interface
+```
+
+---
 
 ## Supported Robots
 - **I2RT YAM**
@@ -22,7 +351,7 @@ For additional resources:
 ## Quick Start
 
 ```bash
-git clone https://github.com/wuphilipp/gello_software.git
+git clone --recursive https://github.com/jooyongsim/gello_software.git
 cd gello_software
 ```
 
