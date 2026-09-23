@@ -516,6 +516,11 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
     def _check_port_availability(self) -> bool:
         """Check if the port is available and not being used by other processes."""
+        # Windows COM ports (for example, COM5) are not filesystem paths.
+        # Let the Dynamixel SDK validate/open the port in _initialize_hardware().
+        if os.name == "nt":
+            return True
+
         try:
             # Check if port exists
             if not os.path.exists(self._port):
@@ -541,6 +546,11 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
     def _kill_processes_using_port(self) -> bool:
         """Kill processes that are using the port."""
+        # fuser is a Unix utility. On Windows, fail cleanly and let the
+        # Dynamixel SDK report whether the COM port can be opened.
+        if os.name == "nt":
+            return False
+
         try:
             result = subprocess.run(
                 ["fuser", "-k", self._port], capture_output=True, text=True
@@ -556,6 +566,10 @@ class DynamixelDriver(DynamixelDriverProtocol):
 
     def _fix_port_permissions(self) -> bool:
         """Fix port permissions if needed."""
+        # Windows serial-port permissions are not managed with chmod/sudo.
+        if os.name == "nt":
+            return False
+
         try:
             result = subprocess.run(
                 ["sudo", "chmod", "666", self._port], capture_output=True, text=True
