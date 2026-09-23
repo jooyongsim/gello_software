@@ -1,4 +1,5 @@
 import glob
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -124,7 +125,12 @@ def main(args):
         if args.agent == "gello":
             gello_port = args.gello_port
             if gello_port is None:
-                usb_ports = glob.glob("/dev/serial/by-id/*")
+                if os.name == "nt":
+                    from serial.tools import list_ports
+
+                    usb_ports = [p.device for p in list_ports.comports()]
+                else:
+                    usb_ports = glob.glob("/dev/serial/by-id/*")
                 print(f"Found {len(usb_ports)} ports")
                 if len(usb_ports) > 0:
                     gello_port = usb_ports[0]
