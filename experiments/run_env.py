@@ -1,5 +1,3 @@
-import glob
-import os
 import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -10,6 +8,7 @@ import tyro
 from gello.env import RobotEnv
 from gello.robots.robot import PrintRobot
 from gello.utils.launch_utils import instantiate_from_dict
+from gello.utils.serial_ports import find_gello_port
 from gello.zmq_core.robot_node import ZMQClientRobot
 
 
@@ -125,20 +124,14 @@ def main(args):
         if args.agent == "gello":
             gello_port = args.gello_port
             if gello_port is None:
-                if os.name == "nt":
-                    from serial.tools import list_ports
-
-                    usb_ports = [p.device for p in list_ports.comports()]
-                else:
-                    usb_ports = glob.glob("/dev/serial/by-id/*")
-                print(f"Found {len(usb_ports)} ports")
-                if len(usb_ports) > 0:
-                    gello_port = usb_ports[0]
-                    print(f"using port {gello_port}")
-                else:
+                gello_port = find_gello_port()
+                if gello_port is None:
                     raise ValueError(
-                        "No gello port found, please specify one or plug in gello"
+                        "No gello port found, please plug in gello or pass the port "
+                        "explicitly with --gello-port (COM5 on Windows, "
+                        "/dev/serial/by-id/... on Linux)"
                     )
+                print(f"using port {gello_port}")
             agent_cfg = {
                 "_target_": "gello.agents.gello_agent.GelloAgent",
                 "port": gello_port,

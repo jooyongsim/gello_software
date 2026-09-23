@@ -4,7 +4,6 @@ This script guides the user through setting up their YAM arm in the known positi
 and automatically generates a YAML configuration file with the detected joint offsets.
 """
 
-import glob
 import os
 import sys
 from dataclasses import dataclass
@@ -16,6 +15,7 @@ import tyro
 import yaml
 
 from gello.dynamixel.driver import DynamixelDriver
+from gello.utils.serial_ports import find_gello_port
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -58,30 +58,6 @@ class Args:
     def num_joints(self) -> int:
         extra_joints = 1 if self.gripper else 0
         return self.num_robot_joints + extra_joints
-
-
-def find_gello_port() -> Optional[str]:
-    """Auto-detect GELLO port by looking for FTDI USB-Serial converters."""
-    possible_ports = glob.glob("/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_*")
-
-    if not possible_ports:
-        return None
-    elif len(possible_ports) == 1:
-        return possible_ports[0]
-    else:
-        print("Multiple FTDI ports found:")
-        for i, port in enumerate(possible_ports):
-            print(f"  {i+1}: {port}")
-
-        while True:
-            try:
-                choice = int(input("Select port number: ")) - 1
-                if 0 <= choice < len(possible_ports):
-                    return possible_ports[choice]
-                else:
-                    print("Invalid choice, please try again.")
-            except ValueError:
-                print("Please enter a valid number.")
 
 
 def get_joint_offsets(
@@ -198,7 +174,7 @@ def main(args: Args) -> None:
     # Step 1: Port detection
     if args.port is None:
         print("Detecting GELLO port...")
-        port = find_gello_port()
+        port = find_gello_port(ftdi_only=True)
         if port is None:
             print("Please ensure your GELLO device is connected and try again.")
             sys.exit(1)
