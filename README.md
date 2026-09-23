@@ -55,23 +55,34 @@ appropriate calibrated entry to `PORT_CONFIG_MAP`.
 
 #### Windows installation
 
-From PowerShell:
+From PowerShell, use Python 3.11 explicitly. Do not rely on whatever `python`
+currently points to, because older system Python installations can be picked up
+when virtual-environment activation fails.
 
 ```powershell
 git clone --recursive https://github.com/jooyongsim/gello_software.git
 cd gello_software
 
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.11 -m venv .venv
 
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-pip install -e .\third_party\DynamixelSDK\python
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e .\third_party\DynamixelSDK\python
 ```
 
-If PowerShell blocks virtual-environment activation, the following changes the
-execution policy only for the current shell:
+Using `.venv\Scripts\python.exe` directly is intentional: it works even if
+PowerShell activation is blocked or fails. To verify the interpreter:
+
+```powershell
+.\.venv\Scripts\python.exe --version
+```
+
+The expected result is Python 3.11.x.
+
+Activation is optional. If you prefer an activated shell and PowerShell blocks
+the activation script, the following changes the execution policy only for the
+current shell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
